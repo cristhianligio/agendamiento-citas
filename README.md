@@ -2,7 +2,7 @@
 
 Script para facilitar la consecución de citas para la **devolución del IVA de vehículos híbridos y/o eléctricos**. Revisa la disponibilidad de citas por videoatención y te avisa en el teléfono y en el Mac en cuanto aparece el trámite de tu ciudad.
 
-Es ideal para **Bogotá, Medellín, Cali y Bucaramanga**, las ciudades donde se ofrece este trámite.
+Es ideal para **Bogotá, Medellín, Cali y Bucaramanga**, las ciudades donde se ofrece este trámite y es necesario conseguir una cita para poder enviar los documentos.
 
 Las citas se ocupan en segundos. Por eso, cuando el monitor encuentra disponibilidad, deja tu Chrome ya en el campo **Trámite**, al frente y resaltado, para que solo tengas que elegir la opción y continuar.
 
