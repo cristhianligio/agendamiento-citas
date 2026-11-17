@@ -1,0 +1,10 @@
+# Entorno de Python
+.venv/
+__pycache__/
+*.pyc
+
+# Privado: el tema de ntfy funciona como una contraseña
+ntfy_topic.txt
+
+# Historial de ejecución
+monitor.log
