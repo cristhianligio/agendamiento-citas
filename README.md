@@ -4,7 +4,7 @@ Script para facilitar la consecución de citas para la **devolución del IVA de 
 
 Es ideal para **Bogotá, Medellín, Cali y Bucaramanga**, las ciudades donde se ofrece este trámite y es necesario conseguir una cita para poder enviar los documentos.
 
-Las citas se ocupan en segundos. Por eso, cuando el monitor encuentra disponibilidad, deja tu Chrome ya en el campo **Trámite**, al frente y resaltado, para que solo tengas que elegir la opción y continuar.
+Las citas se ocupan en segundos. Por eso, cuando el monitor encuentra disponibilidad, deja tu Chrome ya en el campo **Trámite**, resaltado, para que solo tengas que elegir la opción y continuar.
 
 ## Qué hace y qué no hace
 
@@ -50,6 +50,7 @@ La primera vez se crea el archivo `ntfy_topic.txt`, con un nombre de tema aleato
 
 - **iPhone:** en *Ajustes → Notificaciones → ntfy*, activa las notificaciones, los sonidos y, si está disponible, **Notificaciones críticas** o **Urgentes**, para que suenen aunque esté activado un modo de Concentración.
 - **El nombre del tema funciona como una contraseña.** Cualquiera que lo conozca puede leer tus avisos, así que no lo compartas. Los avisos no incluyen datos personales.
+- **Si los avisos aparecen al abrir la app pero no llegan como notificación**, el iPhone dejó de estar registrado para recibir avisos de ese tema. Elimina el tema en la app ntfy, ciérrala por completo, vuelve a suscribirte con el mismo nombre y repite `python3 monitor.py --probar-notificacion` con el teléfono bloqueado.
 
 ## Uso
 
@@ -58,6 +59,7 @@ python3 monitor.py                           # vigila Bogotá
 python3 monitor.py --ciudad Medellín         # otra ciudad
 python3 monitor.py --ciudad Cali Bucaramanga # varias ciudades
 python3 monitor.py --una-vez                 # una sola revisión, para probar
+python3 monitor.py --enfocar                 # al encontrar la cita, trae Chrome al frente
 ```
 
 Mientras corre:
@@ -65,7 +67,9 @@ Mientras corre:
 - No minimices esa ventana: Chrome puede ralentizar las pestañas minimizadas. Déjala detrás de otras ventanas.
 - Para detenerlo, presiona `Ctrl+C` en la Terminal.
 
-Cuando aparece la cita, recibes el aviso en el teléfono, una notificación con sonido en el Mac, y Chrome pasa al frente con el campo **Trámite** resaltado. Elige la opción, completa tus datos y resuelve el captcha.
+Cuando aparece la cita, recibes el aviso en el teléfono, una notificación con sonido en el Mac, y la pestaña del monitor queda en el campo **Trámite**, resaltado y con el título **¡CITA DISPONIBLE!**. Ve a esa pestaña, elige la opción, completa tus datos y resuelve el captcha.
+
+El monitor **no le quita el foco** a la aplicación que estés usando: puedes seguir escribiendo en otra app mientras revisa. Lo más cómodo es dejar la ventana de Chrome del monitor visible en otra pantalla o detrás de tus ventanas. Si prefieres que Chrome pase al frente automáticamente al encontrar la cita, usa `--enfocar`.
 
 ### Dejarlo corriendo en segundo plano
 

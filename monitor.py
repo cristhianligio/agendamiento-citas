@@ -6,7 +6,8 @@ Trabaja en TU Google Chrome (tu perfil y tus sesiones): controla una pestaña co
 AppleScript, recorre Agendar cita > Persona Natural > Videoatención > Devoluciones
 y revisa el campo "Trámite". Solo avisa si aparece el trámite de vehículos
 eléctricos o híbridos para la ciudad elegida. En ese caso la pestaña YA queda en
-"Trámite", al frente, y el monitor se detiene. Los datos personales y el captcha
+"Trámite", resaltada, y el monitor se detiene. No le quita el foco a la app que estés
+usando, salvo que pidas --enfocar. Los datos personales y el captcha
 los completas tú.
 
 Requisitos (una sola vez):
@@ -17,6 +18,7 @@ Uso:
     python3 monitor.py                          # Bogotá, revisa cada ~60-80 s
     python3 monitor.py --ciudad Medellín Cali   # una o varias ciudades
     python3 monitor.py --una-vez                # una sola revisión (prueba)
+    python3 monitor.py --enfocar                # al encontrar la cita, traer Chrome al frente
     python3 monitor.py --probar-notificacion    # prueba el aviso al teléfono
 """
 import argparse
@@ -194,6 +196,17 @@ end run
 
 
 def navegar(w, t):
+    """Recarga el sitio en la pestaña sin quitarle el foco a la app que estás usando.
+
+    Cambiar la URL con AppleScript ("set URL") trae Chrome al frente; navegar con
+    JavaScript dentro de la pestaña no. Si la pestaña no acepta JavaScript (p. ej.
+    una página interna de Chrome), se usa AppleScript como respaldo.
+    """
+    try:
+        js(w, t, "location.replace(" + repr(URL) + "); 'ok'")
+        return
+    except ErrorChrome:
+        pass
     osa("""
 on run argv
   tell application "Google Chrome"
@@ -203,7 +216,9 @@ end run
 """, w, t, URL)
 
 
-def traer_al_frente(w, t):
+def mostrar_pestana(w, t, enfocar=False):
+    """Deja visible la pestaña del monitor en su ventana. Solo con enfocar=True trae
+    Chrome al frente (eso le quita el foco a la app que estés usando)."""
     osa("""
 on run argv
   tell application "Google Chrome"
@@ -213,11 +228,13 @@ on run argv
       set i to i + 1
       if (id of t as text) = (item 2 of argv) then set active tab index of w to i
     end repeat
-    set index of w to 1
-    activate
+    if (item 3 of argv) is "si" then
+      set index of w to 1
+      activate
+    end if
   end tell
 end run
-""", w, t)
+""", w, t, "si" if enfocar else "no")
 
 
 def revisar(w, t, ciudades):
@@ -243,6 +260,8 @@ def main():
                     help=f"una o varias ciudades a vigilar (por defecto Bogotá). Opciones: {', '.join(CIUDADES)}")
     ap.add_argument("--intervalo", type=int, default=INTERVALO_MIN,
                     help=f"segundos entre revisiones; solo se puede aumentar (mínimo {INTERVALO_MIN})")
+    ap.add_argument("--enfocar", action="store_true",
+                    help="al encontrar la cita, traer Chrome al frente (quita el foco a la app que estés usando)")
     ap.add_argument("--una-vez", action="store_true", help="hacer una sola revisión y salir")
     ap.add_argument("--probar-notificacion", action="store_true",
                     help="enviar una notificación de prueba al teléfono y salir")
@@ -287,7 +306,7 @@ def main():
                 f"{', '.join(ciudades)} (sin aviso): " + "; ".join(opciones))
         elif estado == "objetivo":
             log(f"#{intento} ¡DISPONIBLE! {'; '.join(opciones)}")
-            traer_al_frente(w, t)
+            mostrar_pestana(w, t, enfocar=args.enfocar)
             try:
                 js(w, t, JS_RESALTAR)
             except ErrorChrome:
