@@ -165,6 +165,16 @@ def osa(script, *args):
     return r.stdout.strip()
 
 
+def pestana_perdida(e):
+    """¿El error indica que la ventana o pestaña del monitor ya no existe?
+
+    Se revisan los códigos de error de AppleScript, que no dependen del idioma de macOS:
+    -1728 (no se puede obtener), -1719 (índice no válido), -10006 (no se puede ajustar).
+    Pasa, por ejemplo, cuando Chrome se reinicia: las ventanas restauradas tienen otros ids.
+    """
+    return any(c in str(e) for c in ("(-1728)", "(-1719)", "(-10006)"))
+
+
 def pestana_dedicada():
     """Busca una pestaña de la plataforma en tu Chrome; si no hay, abre una ventana nueva."""
     salida = osa("""
@@ -287,8 +297,8 @@ def main():
         try:
             estado, opciones = revisar(w, t, ciudades)
         except ErrorChrome as e:
-            if "no es válido" in str(e) or "Invalid index" in str(e) or "Can’t get" in str(e) or "Can't get" in str(e):
-                log("La pestaña del monitor se cerró; abriendo otra.")
+            if pestana_perdida(e):
+                log("La pestaña del monitor ya no existe (se cerró o Chrome se reinició); buscando otra.")
                 w, t = pestana_dedicada()
                 continue
             log(f"#{intento} {e}")
