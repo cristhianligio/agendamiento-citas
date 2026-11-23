@@ -4,14 +4,15 @@ Script para facilitar la consecución de citas para la **devolución del IVA de 
 
 Es ideal para **Bogotá, Medellín, Cali y Bucaramanga**, las ciudades donde se ofrece este trámite y es necesario conseguir una cita para poder enviar los documentos.
 
-Las citas se ocupan en segundos. Por eso, cuando el monitor encuentra disponibilidad, deja tu Chrome ya en el campo **Trámite**, resaltado, para que solo tengas que elegir la opción y continuar.
+Las citas se ocupan en segundos. Por eso, cuando el monitor encuentra disponibilidad, elige el trámite de tu ciudad y da clic en **Siguiente** antes de avisarte. Así tu Chrome queda en el paso donde eliges sede, fecha y hora.
 
 ## Qué hace y qué no hace
 
 **Hace:**
 - Abre la plataforma de agendamiento en una pestaña de **tu propio Google Chrome**, con tu perfil.
 - Repite el recorrido *Agendar cita → Persona Natural → Videoatención → Devoluciones* cada 60 a 80 segundos.
-- Si en el campo **Trámite** aparece la devolución para vehículos eléctricos o híbridos de tu ciudad, te avisa y se detiene con la pestaña lista.
+- Si en el campo **Trámite** aparece la devolución para vehículos eléctricos o híbridos de tu ciudad, elige esa opción y da clic en **Siguiente**.
+- Si la plataforma pasa al paso de sede, fecha y hora, te avisa y se detiene con la pestaña lista. Si responde que ya no hay citas, no te avisa y sigue vigilando.
 
 **No hace:**
 - **No llena datos personales ni resuelve el captcha.** La notificación solo te indica que hay disponibilidad. Tú debes completar tus datos personales y resolver el captcha.
@@ -67,7 +68,9 @@ Mientras corre:
 - No minimices esa ventana: Chrome puede ralentizar las pestañas minimizadas. Déjala detrás de otras ventanas.
 - Para detenerlo, presiona `Ctrl+C` en la Terminal.
 
-Cuando aparece la cita, recibes el aviso en el teléfono, una notificación con sonido en el Mac, y la pestaña del monitor queda en el campo **Trámite**, resaltado y con el título **¡CITA DISPONIBLE!**. Ve a esa pestaña, elige la opción, completa tus datos y resuelve el captcha.
+Cuando aparece la cita, recibes el aviso en el teléfono y una notificación con sonido en el Mac, y la pestaña del monitor queda con el título **¡CITA DISPONIBLE!** en el paso de sede, fecha y hora. Ve a esa pestaña, elige sede, fecha y hora, completa tus datos y resuelve el captcha.
+
+Si el monitor no logra avanzar solo, te avisa igual y deja la pestaña en el campo **Trámite**, resaltado, para que elijas la opción y continúes.
 
 El monitor **no le quita el foco** a la aplicación que estés usando: puedes seguir escribiendo en otra app mientras revisa. Lo más cómodo es dejar la ventana de Chrome del monitor visible en otra pantalla o detrás de tus ventanas. Si prefieres que Chrome pase al frente automáticamente al encontrar la cita, usa `--enfocar`.
 

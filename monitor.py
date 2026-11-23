@@ -5,10 +5,11 @@ Monitor de citas para la devolución del IVA de vehículos eléctricos o híbrid
 Trabaja en TU Google Chrome (tu perfil y tus sesiones): controla una pestaña con
 AppleScript, recorre Agendar cita > Persona Natural > Videoatención > Devoluciones
 y revisa el campo "Trámite". Solo avisa si aparece el trámite de vehículos
-eléctricos o híbridos para la ciudad elegida. En ese caso la pestaña YA queda en
-"Trámite", resaltada, y el monitor se detiene. No le quita el foco a la app que estés
-usando, salvo que pidas --enfocar. Los datos personales y el captcha
-los completas tú.
+eléctricos o híbridos para la ciudad elegida. En ese caso elige esa opción, da clic
+en "Siguiente" y, si la plataforma pasa al paso 2 (sede, fecha y hora), te avisa y se
+detiene. Si la plataforma responde que ya no hay citas, no avisa y sigue vigilando.
+No le quita el foco a la app que estés usando, salvo que pidas --enfocar. Los datos
+personales y el captcha los completas tú.
 
 Requisitos (una sola vez):
   1. Chrome > Visualización > Opciones para desarrolladores > Permitir JavaScript desde Apple Events.
@@ -22,6 +23,7 @@ Uso:
     python3 monitor.py --probar-notificacion    # prueba el aviso al teléfono
 """
 import argparse
+import json
 import os
 import random
 import secrets
@@ -39,6 +41,9 @@ INTERVALO_MIN = 60   # s; fijo: revisar más seguido puede hacer que la platafor
 TIMEOUT_CICLO = 120  # s; la plataforma a veces tarda bastante
 SONDEO = 0.4         # s entre consultas a la pestaña
 TIMEOUT_OSA = 20     # s máximos que esperamos a que Chrome responda una orden
+TIMEOUT_AVANCE = 30  # s máximos para elegir el trámite y pasar al paso 2
+ESPERA_BOTON = 5     # s máximos para que se habilite "Siguiente" tras elegir el trámite
+ESPERA_PASO_DOS = 2  # s que se espera en el paso 2 por si aparece el aviso de "sin citas"
 
 ARCHIVO_TOPIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ntfy_topic.txt")
 
@@ -130,10 +135,55 @@ JS_PASO = r"""
 })()
 """
 
+# JavaScript que elige el trámite objetivo en "Trámite" y da clic en "Siguiente".
+# Se ejecuta en cada sondeo y hace como mucho UNA acción por llamada. __OBJETIVO__ se
+# reemplaza por el texto exacto de la opción. No llena datos personales.
+JS_AVANZAR = r"""
+(function (objetivo) {
+  var vis = function (el) {
+    return !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+  };
+  var modales = ['ModalSinCitas', 'ModalError'];
+  for (var i = 0; i < modales.length; i++) {
+    var m = document.querySelector('div[nombre="' + modales[i] + '"]');
+    if (vis(m)) {
+      var txt = Array.prototype.map.call(m.querySelectorAll('div[nombre="txtTituloModal"], div[nombre="txtInfoAdicional"]'),
+        function (x) { return x.textContent.trim(); }).filter(Boolean).join(' ');
+      return 'SIN_CUPO\n' + txt.replace(/\s+/g, ' ');
+    }
+  }
+  if (vis(document.querySelector('div[nombre="PasoDos"]'))) return 'PASO_DOS';
+  var P = 'div[nombre="PasoUno"] ';
+  var est = window.__monitorAvance || (window.__monitorAvance = {});
+  if (!est.elegido) {
+    var sel = document.querySelector(P + 'div[nombre="Servicios"] select');
+    if (!vis(sel)) return 'SIN_SELECT';
+    var op = Array.prototype.find.call(sel.options, function (o) { return o.text.trim() === objetivo; });
+    if (!op) return 'SIN_OPCION';
+    sel.selectedIndex = op.index;
+    sel.dispatchEvent(new Event('input', {bubbles: true}));
+    sel.dispatchEvent(new Event('change', {bubbles: true}));
+    est.elegido = 1;
+    return 'ELEGIDO';
+  }
+  if (!est.siguiente) {
+    var b = document.querySelector(P + 'div[nombre="btnSiguiente"]');
+    if (vis(b)) { b.click(); est.siguiente = 1; return 'CLIC siguiente'; }
+    return 'ESPERANDO_BOTON';
+  }
+  return 'ESPERANDO';
+})(__OBJETIVO__)
+"""
+
 JS_RESALTAR = r"""
 (function () {
-  var sel = document.querySelector('div[nombre="PasoUno"] div[nombre="Servicios"] select');
-  if (sel) { sel.scrollIntoView({block: 'center'}); sel.style.outline = '4px solid #16a34a'; sel.focus(); }
+  var p2 = document.querySelector('div[nombre="PasoDos"]');
+  if (p2 && p2.getClientRects().length > 0) {
+    window.scrollTo(0, 0);
+  } else {
+    var sel = document.querySelector('div[nombre="PasoUno"] div[nombre="Servicios"] select');
+    if (sel) { sel.scrollIntoView({block: 'center'}); sel.style.outline = '4px solid #16a34a'; sel.focus(); }
+  }
   document.title = '¡CITA DISPONIBLE!';
   return 'ok';
 })()
@@ -264,6 +314,47 @@ def revisar(w, t, ciudades):
     raise TimeoutError(f"sin resultado en {TIMEOUT_CICLO}s (último estado: {r})")
 
 
+def elegir_opcion(opciones, ciudades):
+    """La primera opción objetivo, respetando el orden de las ciudades pedidas."""
+    for c in ciudades:
+        for o in opciones:
+            if es_objetivo(o, [c]):
+                return o
+    return None
+
+
+def avanzar(w, t, opcion):
+    """Elige la opción en "Trámite" y da clic en "Siguiente".
+
+    Devuelve (resultado, detalle), con resultado:
+      paso_dos  la plataforma pasó a elegir ciudad, sede, fecha y hora
+      sin_cupo  la plataforma respondió que ya no hay citas
+      fallo     no se pudo avanzar; la pestaña queda en "Trámite"
+    """
+    codigo = JS_AVANZAR.replace("__OBJETIVO__", json.dumps(opcion))
+    r = ""
+    paso_dos_desde = None
+    inicio = time.time()
+    limite = inicio + TIMEOUT_AVANCE
+    while time.time() < limite:
+        r = js(w, t, codigo)
+        if r.startswith("SIN_CUPO"):
+            return "sin_cupo", " ".join(r.split("\n")[1:])
+        if r in ("SIN_SELECT", "SIN_OPCION"):
+            return "fallo", r
+        if r == "ESPERANDO_BOTON" and time.time() - inicio > ESPERA_BOTON:
+            return "fallo", f"el botón Siguiente no se habilitó en {ESPERA_BOTON}s"
+        if r == "PASO_DOS":
+            # Espera un momento por si la plataforma muestra el aviso de "sin citas" al cargar.
+            paso_dos_desde = paso_dos_desde or time.time()
+            if time.time() - paso_dos_desde >= ESPERA_PASO_DOS:
+                return "paso_dos", ""
+        time.sleep(SONDEO)
+    if paso_dos_desde:
+        return "paso_dos", ""
+    return "fallo", f"sin respuesta en {TIMEOUT_AVANCE}s (último estado: {r})"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--ciudad", nargs="+", default=["Bogotá"], metavar="CIUDAD",
@@ -316,16 +407,33 @@ def main():
                 f"{', '.join(ciudades)} (sin aviso): " + "; ".join(opciones))
         elif estado == "objetivo":
             log(f"#{intento} ¡DISPONIBLE! {'; '.join(opciones)}")
-            mostrar_pestana(w, t, enfocar=args.enfocar)
+            elegida = elegir_opcion(opciones, ciudades)
+            log(f"#{intento} Eligiendo \"{elegida}\" y dando clic en Siguiente...")
             try:
-                js(w, t, JS_RESALTAR)
-            except ErrorChrome:
-                pass
-            encontradas = [o for o in opciones if es_objetivo(o, ciudades)]
-            notificar("Cita disponible: vehículos eléctricos o híbridos",
-                      f"{'; '.join(encontradas)}. Tu Chrome ya está en Trámite: elige la opción y continúa.")
-            log("La pestaña quedó en 'Trámite' en tu Chrome. Monitor detenido para que completes el agendamiento.")
-            return
+                resultado, detalle = avanzar(w, t, elegida)
+            except ErrorChrome as e:
+                resultado, detalle = "fallo", str(e)
+
+            if resultado == "sin_cupo":
+                log(f"#{intento} Al dar clic en Siguiente, la plataforma respondió que ya no hay citas "
+                    f"({detalle or 'sin detalle'}). Sin aviso; sigo vigilando.")
+            else:
+                mostrar_pestana(w, t, enfocar=args.enfocar)
+                try:
+                    js(w, t, JS_RESALTAR)
+                except ErrorChrome:
+                    pass
+                if resultado == "paso_dos":
+                    log(f"#{intento} La plataforma pasó al paso 2 (ciudad, sede, fecha y hora).")
+                    mensaje = (f"{elegida}. Tu Chrome ya avanzó al paso 2: elige sede, fecha y hora, "
+                               "y completa tus datos.")
+                else:
+                    log(f"#{intento} No se pudo avanzar automáticamente ({detalle}). "
+                        "La pestaña quedó en 'Trámite'.")
+                    mensaje = f"{elegida}. Tu Chrome ya está en Trámite: elige la opción y continúa."
+                notificar("Cita disponible: vehículos eléctricos o híbridos", mensaje)
+                log("Monitor detenido para que completes el agendamiento en tu Chrome.")
+                return
 
         if args.una_vez:
             return
