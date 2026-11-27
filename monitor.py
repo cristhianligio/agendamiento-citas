@@ -5,9 +5,10 @@ Monitor de citas para la devolución del IVA de vehículos eléctricos o híbrid
 Trabaja en TU Google Chrome (tu perfil y tus sesiones): controla una pestaña con
 AppleScript, recorre Agendar cita > Persona Natural > Videoatención > Devoluciones
 y revisa el campo "Trámite". Solo avisa si aparece el trámite de vehículos
-eléctricos o híbridos para la ciudad elegida. En ese caso elige esa opción, da clic
-en "Siguiente" y, si la plataforma pasa al paso 2 (sede, fecha y hora), te avisa y se
-detiene. Si la plataforma responde que ya no hay citas, no avisa y sigue vigilando.
+eléctricos o híbridos para la ciudad elegida. En ese caso elige esa opción, la
+primera fecha disponible y la primera hora, y da clic en "Siguiente" hasta el
+formulario de cédula y captcha. Solo avisa si ese formulario carga. Si la plataforma
+responde que no hay citas o muestra un paso vacío, sigue vigilando.
 No le quita el foco a la app que estés usando, salvo que pidas --enfocar. Los datos
 personales y el captcha los completas tú.
 
@@ -41,9 +42,10 @@ INTERVALO_MIN = 60   # s; fijo: revisar más seguido puede hacer que la platafor
 TIMEOUT_CICLO = 120  # s; la plataforma a veces tarda bastante
 SONDEO = 0.4         # s entre consultas a la pestaña
 TIMEOUT_OSA = 20     # s máximos que esperamos a que Chrome responda una orden
-TIMEOUT_AVANCE = 30  # s máximos para elegir el trámite y pasar al paso 2
+TIMEOUT_AVANCE = 90  # s máximos para llegar del trámite al formulario de cédula
 ESPERA_BOTON = 5     # s máximos para que se habilite "Siguiente" tras elegir el trámite
-ESPERA_PASO_DOS = 2  # s que se espera en el paso 2 por si aparece el aviso de "sin citas"
+ESPERA_FORMULARIO = 20  # s máximos para que un paso que ya se mostró cargue su formulario
+ESPERA_PASO_DOS_AUTO = 45  # s máximos para elegir fecha y hora en el paso 2
 
 ARCHIVO_TOPIC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ntfy_topic.txt")
 
@@ -135,39 +137,102 @@ JS_PASO = r"""
 })()
 """
 
-# JavaScript que elige el trámite objetivo en "Trámite" y da clic en "Siguiente".
-# Se ejecuta en cada sondeo y hace como mucho UNA acción por llamada. __OBJETIVO__ se
-# reemplaza por el texto exacto de la opción. No llena datos personales.
+# JavaScript que avanza solo hasta el paso 3 (cédula y captcha). Se ejecuta en cada
+# sondeo y hace como mucho UNA acción por llamada:
+#   paso 1: elige el trámite __OBJETIVO__ y da clic en "Siguiente";
+#   paso 2: elige la primera fecha habilitada del calendario, la primera hora y da
+#           clic en "Siguiente".
+# No llena datos personales ni toca el captcha.
 JS_AVANZAR = r"""
 (function (objetivo) {
   var vis = function (el) {
     return !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
   };
+  var q = function (sel) { return document.querySelector(sel); };
   var modales = ['ModalSinCitas', 'ModalError'];
   for (var i = 0; i < modales.length; i++) {
-    var m = document.querySelector('div[nombre="' + modales[i] + '"]');
+    var m = q('div[nombre="' + modales[i] + '"]');
     if (vis(m)) {
       var txt = Array.prototype.map.call(m.querySelectorAll('div[nombre="txtTituloModal"], div[nombre="txtInfoAdicional"]'),
         function (x) { return x.textContent.trim(); }).filter(Boolean).join(' ');
       return 'SIN_CUPO\n' + txt.replace(/\s+/g, ' ');
     }
   }
-  if (vis(document.querySelector('div[nombre="PasoDos"]'))) return 'PASO_DOS';
-  var P = 'div[nombre="PasoUno"] ';
   var est = window.__monitorAvance || (window.__monitorAvance = {});
+
+  // Paso 3: formulario de cédula y captcha.
+  // Cuenta como cargado si aparece cualquiera de sus elementos: el captcha, el campo de
+  // cédula, "Tipo de documento" o el bloque con los datos que la plataforma ya tiene.
+  if (vis(q('div[nombre="PasoTres"]'))) {
+    var P3 = 'div[nombre="PasoTres"] ';
+    var cap = q(P3 + 'div[nombre="Captcha"]');
+    var hay = [];
+    if (cap && vis(cap.querySelector('iframe'))) hay.push('captcha');
+    if (vis(q('div[pantalla="PasoTres"][nombre="tbxNumeroDoc"] input'))) hay.push('campo de cédula');
+    if (vis(q(P3 + 'div[nombre="TipoDocumento"]'))) hay.push('tipo de documento');
+    if (vis(q(P3 + 'div[nombre="txtInfoAsociada"]')) || vis(q(P3 + 'div[nombre="DatosCorretos"]'))) hay.push('datos registrados');
+    return hay.length ? 'PASO_TRES_LISTO\n' + hay.join(', ') : 'PASO_TRES_VACIO';
+  }
+
+  // Paso 2: fecha, hora y "Siguiente".
+  var P2 = 'div[nombre="PasoDos"] ';
+  if (vis(q('div[nombre="PasoDos"]'))) {
+    var btnFecha = q(P2 + 'div[nombre="btnFecha"]');
+    if (!vis(btnFecha)) return 'PASO_DOS_VACIO';
+    if (!est.fecha) {
+      var cal = q(P2 + 'div[nombre="Calendario"]');
+      var celdas = cal ? Array.prototype.filter.call(cal.querySelectorAll('td[role="gridcell"]'), function (td) {
+        return td.querySelector('.k-link') && !td.classList.contains('k-state-disabled') && !td.classList.contains('k-disabled');
+      }) : [];
+      if (celdas.length) {
+        var link = celdas[0].querySelector('.k-link');
+        link.click();
+        est.fecha = Date.now();
+        return 'P2 FECHA ' + (link.getAttribute('title') || celdas[0].getAttribute('title') || link.textContent.trim());
+      }
+      if (cal && !cal.classList.contains('calendario-open') && !est.abrioCal) {
+        btnFecha.click(); est.abrioCal = 1; return 'P2 ABRIR_CALENDARIO';
+      }
+      var sig = cal && cal.querySelector('.k-nav-next, .k-calendar-nav-next');
+      if (sig && cal.querySelector('td[role="gridcell"]') && (est.meses || 0) < 3) {
+        sig.click(); est.meses = (est.meses || 0) + 1; return 'P2 MES_SIGUIENTE';
+      }
+      return 'P2 ESPERANDO_FECHA';
+    }
+    if (!est.hora) {
+      if (Date.now() - est.fecha < 1500) return 'P2 ESPERANDO_HORA';
+      var hs = q(P2 + 'div[nombre="Horas"] select');
+      var op = vis(hs) && Array.prototype.find.call(hs.options, function (o) { return o.value !== '' && o.text.trim(); });
+      if (!op) return 'P2 ESPERANDO_HORA';
+      hs.selectedIndex = op.index;
+      hs.dispatchEvent(new Event('input', {bubbles: true}));
+      hs.dispatchEvent(new Event('change', {bubbles: true}));
+      est.hora = 1;
+      return 'P2 HORA ' + op.text.trim();
+    }
+    if (!est.siguiente2) {
+      var b2 = q(P2 + 'div[nombre="btnSiguiente"]');
+      if (vis(b2)) { b2.click(); est.siguiente2 = 1; return 'P2 CLIC siguiente'; }
+      return 'P2 ESPERANDO_BOTON';
+    }
+    return 'P2 ESPERANDO_PASO_TRES';
+  }
+
+  // Paso 1: trámite y "Siguiente".
+  var P = 'div[nombre="PasoUno"] ';
   if (!est.elegido) {
-    var sel = document.querySelector(P + 'div[nombre="Servicios"] select');
+    var sel = q(P + 'div[nombre="Servicios"] select');
     if (!vis(sel)) return 'SIN_SELECT';
-    var op = Array.prototype.find.call(sel.options, function (o) { return o.text.trim() === objetivo; });
-    if (!op) return 'SIN_OPCION';
-    sel.selectedIndex = op.index;
+    var opt = Array.prototype.find.call(sel.options, function (o) { return o.text.trim() === objetivo; });
+    if (!opt) return 'SIN_OPCION';
+    sel.selectedIndex = opt.index;
     sel.dispatchEvent(new Event('input', {bubbles: true}));
     sel.dispatchEvent(new Event('change', {bubbles: true}));
     est.elegido = 1;
     return 'ELEGIDO';
   }
   if (!est.siguiente) {
-    var b = document.querySelector(P + 'div[nombre="btnSiguiente"]');
+    var b = q(P + 'div[nombre="btnSiguiente"]');
     if (vis(b)) { b.click(); est.siguiente = 1; return 'CLIC siguiente'; }
     return 'ESPERANDO_BOTON';
   }
@@ -177,8 +242,15 @@ JS_AVANZAR = r"""
 
 JS_RESALTAR = r"""
 (function () {
-  var p2 = document.querySelector('div[nombre="PasoDos"]');
-  if (p2 && p2.getClientRects().length > 0) {
+  var vis = function (el) { return !!el && el.getClientRects().length > 0; };
+  var ced = document.querySelector('div[pantalla="PasoTres"][nombre="tbxNumeroDoc"] input');
+  var p3 = document.querySelector('div[nombre="PasoTres"]');
+  if (vis(ced)) {
+    ced.scrollIntoView({block: 'center'}); ced.style.outline = '4px solid #16a34a'; ced.focus();
+  } else if (vis(p3)) {
+    var cap = p3.querySelector('div[nombre="Captcha"]');
+    (vis(cap) ? cap : p3).scrollIntoView({block: 'start'});
+  } else if (vis(document.querySelector('div[nombre="PasoDos"]'))) {
     window.scrollTo(0, 0);
   } else {
     var sel = document.querySelector('div[nombre="PasoUno"] div[nombre="Servicios"] select');
@@ -324,34 +396,53 @@ def elegir_opcion(opciones, ciudades):
 
 
 def avanzar(w, t, opcion):
-    """Elige la opción en "Trámite" y da clic en "Siguiente".
+    """Avanza solo hasta el formulario de cédula y captcha (paso 3).
+
+    Paso 1: elige la opción en "Trámite" y da clic en "Siguiente".
+    Paso 2: elige la primera fecha disponible, la primera hora y da clic en "Siguiente".
 
     Devuelve (resultado, detalle), con resultado:
-      paso_dos  la plataforma pasó a elegir ciudad, sede, fecha y hora
-      sin_cupo  la plataforma respondió que ya no hay citas
-      fallo     no se pudo avanzar; la pestaña queda en "Trámite"
+      paso_tres            cargó el formulario de cédula y captcha
+      paso_dos_incompleto  el paso 2 cargó Fecha, pero no se logró terminarlo solo
+      sin_formulario       el paso 2 o el 3 se mostró sin su formulario
+      sin_cupo             la plataforma mostró un aviso de que ya no hay citas
+      fallo                no se pudo avanzar desde el paso 1
     """
     codigo = JS_AVANZAR.replace("__OBJETIVO__", json.dumps(opcion))
     r = ""
-    paso_dos_desde = None
+    pasos = []            # lo que se eligió en el paso 2, para el registro
+    p2_desde = None       # primera vez que se vio el paso 2 con Fecha
+    vacio2_desde = None
+    vacio3_desde = None
     inicio = time.time()
     limite = inicio + TIMEOUT_AVANCE
     while time.time() < limite:
         r = js(w, t, codigo)
         if r.startswith("SIN_CUPO"):
             return "sin_cupo", " ".join(r.split("\n")[1:])
-        if r in ("SIN_SELECT", "SIN_OPCION"):
+        if r.startswith("PASO_TRES_LISTO"):
+            return "paso_tres", "; ".join(pasos + r.split("\n")[1:])
+        if r == "PASO_TRES_VACIO":
+            vacio3_desde = vacio3_desde or time.time()
+            if time.time() - vacio3_desde >= ESPERA_FORMULARIO:
+                return "sin_formulario", f"el paso 3 no cargó el captcha ni el formulario en {ESPERA_FORMULARIO}s"
+        elif r == "PASO_DOS_VACIO":
+            vacio2_desde = vacio2_desde or time.time()
+            if time.time() - vacio2_desde >= ESPERA_FORMULARIO:
+                return "sin_formulario", f"el paso 2 no cargó el campo Fecha en {ESPERA_FORMULARIO}s"
+        elif r.startswith("P2 "):
+            p2_desde = p2_desde or time.time()
+            if r.startswith(("P2 FECHA ", "P2 HORA ")):
+                pasos.append(r[3:].replace("FECHA ", "fecha: ").replace("HORA ", "hora: "))
+            if time.time() - p2_desde >= ESPERA_PASO_DOS_AUTO:
+                return "paso_dos_incompleto", f"último estado: {r[3:]}"
+        elif r in ("SIN_SELECT", "SIN_OPCION"):
             return "fallo", r
-        if r == "ESPERANDO_BOTON" and time.time() - inicio > ESPERA_BOTON:
+        elif r == "ESPERANDO_BOTON" and time.time() - inicio > ESPERA_BOTON:
             return "fallo", f"el botón Siguiente no se habilitó en {ESPERA_BOTON}s"
-        if r == "PASO_DOS":
-            # Espera un momento por si la plataforma muestra el aviso de "sin citas" al cargar.
-            paso_dos_desde = paso_dos_desde or time.time()
-            if time.time() - paso_dos_desde >= ESPERA_PASO_DOS:
-                return "paso_dos", ""
         time.sleep(SONDEO)
-    if paso_dos_desde:
-        return "paso_dos", ""
+    if p2_desde:
+        return "paso_dos_incompleto", f"último estado: {r[3:] if r.startswith('P2 ') else r}"
     return "fallo", f"sin respuesta en {TIMEOUT_AVANCE}s (último estado: {r})"
 
 
@@ -415,22 +506,26 @@ def main():
                 resultado, detalle = "fallo", str(e)
 
             if resultado == "sin_cupo":
-                log(f"#{intento} Al dar clic en Siguiente, la plataforma respondió que ya no hay citas "
+                log(f"#{intento} La plataforma mostró un aviso de que ya no hay citas "
                     f"({detalle or 'sin detalle'}). Sin aviso; sigo vigilando.")
+            elif resultado == "sin_formulario":
+                log(f"#{intento} La plataforma no cargó el formulario ({detalle}). Sin aviso; sigo vigilando.")
+            elif resultado == "fallo":
+                log(f"#{intento} No se pudo avanzar automáticamente ({detalle}). Sin aviso; sigo vigilando.")
             else:
+                if resultado == "paso_tres":
+                    log(f"#{intento} Cargó el paso 3 del formulario ({detalle}).")
+                    mensaje = (f"{elegida}. Tu Chrome ya está en el formulario del captcha, con fecha y hora "
+                               "elegidas: resuelve el captcha y completa tus datos.")
+                else:
+                    log(f"#{intento} El paso 2 cargó Fecha, pero no se pudo terminar solo ({detalle}).")
+                    mensaje = (f"{elegida}. Tu Chrome está en el paso 2 con Fecha cargada: "
+                               "elige fecha y hora, da clic en Siguiente y completa tus datos.")
                 mostrar_pestana(w, t, enfocar=args.enfocar)
                 try:
                     js(w, t, JS_RESALTAR)
                 except ErrorChrome:
                     pass
-                if resultado == "paso_dos":
-                    log(f"#{intento} La plataforma pasó al paso 2 (ciudad, sede, fecha y hora).")
-                    mensaje = (f"{elegida}. Tu Chrome ya avanzó al paso 2: elige sede, fecha y hora, "
-                               "y completa tus datos.")
-                else:
-                    log(f"#{intento} No se pudo avanzar automáticamente ({detalle}). "
-                        "La pestaña quedó en 'Trámite'.")
-                    mensaje = f"{elegida}. Tu Chrome ya está en Trámite: elige la opción y continúa."
                 notificar("Cita disponible: vehículos eléctricos o híbridos", mensaje)
                 log("Monitor detenido para que completes el agendamiento en tu Chrome.")
                 return
